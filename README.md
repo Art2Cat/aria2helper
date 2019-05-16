@@ -18,7 +18,7 @@ golang version >= 1.12 [downlad link](https://golang.org/dl/)
 go get github.com/Art2Cat/aria2helper
 go build .
 ```
-1. Move aria2helper.exe to the directory(e.g D:\\aria2) where you want to install aria2.
+1. Move aria2helper.exe and config.json to the directory(e.g D:\\aria2) where you want to install aria2.
 
 2. Double click aria2helper.exe to run. Or you can run start.ps1 to hide the cmd window.`PowerShell required`
 
@@ -29,8 +29,8 @@ go build .
 go get github.com/Art2Cat/aria2helper
 go build .
 
-# Move aria2helper to the directory(e.g ~/aria2) where you installed aria2.
-cp ./aria2helper ~/aria2
+# Move aria2helper and config.json to the directory(e.g ~/aria2) where you installed aria2.
+cp ./aria2helper ./config.json ~/aria2
 
 cd ~/aria2
 # grant execute permission to aria2helper
