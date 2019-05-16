@@ -1,0 +1,364 @@
+package main
+
+import (
+	"archive/zip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"regexp"
+)
+
+// Config json file
+type Config struct {
+	TrackerURL string `json:"trackerUrl"`
+	ConfigURL  string `json:"confUrl"`
+	Aria2URL   string `json:"aria2Url"`
+	Version    string `json:"version"`
+}
+
+func main() {
+
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// load BT trackers list url
+	config := Config{}
+
+	data, err := ioutil.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		log.Panic(err)
+	}
+
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	// Update aria2 to latest
+	url := getLatestAria2DownloadLink(config.Aria2URL)
+	if url == "" {
+		log.Panicln("can not get latest aria2 release.")
+	}
+
+	s := strings.Split(url, "/")
+	fileName := s[len(s)-1]
+	version := strings.Split(fileName, "-")[1]
+	if isWindows() {
+		exe := filepath.Join(dir, "aria2c.exe")
+		// Download latest aria2 when aria2.exe not exist or version not match
+		if _, er := os.Stat(exe); os.IsNotExist(er) || config.Version != version {
+
+			binaryFile := filepath.Join(dir, fileName)
+			if _, err := os.Stat(binaryFile); os.IsNotExist(err) {
+				log.Println(binaryFile)
+				downloadFile(binaryFile, url)
+			}
+
+			files, err := unzip(binaryFile, dir)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			log.Println("Unzipped:\n" + strings.Join(files, "\n"))
+
+			// Copy files to current dir
+			copyFiles(files, dir)
+
+			// Save latest Aria2 version to config.json
+			config.Version = version
+			data, err := json.MarshalIndent(&config, "", "    ")
+			if err != nil {
+				log.Panicln(err)
+			}
+
+			err = ioutil.WriteFile(filepath.Join(dir, "config.json"), data, 0664)
+			if err != nil {
+				log.Panicln(err)
+			}
+		}
+	} else {
+		run := exec.Command("which", "aria2c")
+
+		err := run.Run()
+		if err != nil {
+			log.Panicln("please install aria2 before run the helper.")
+		}
+	}
+
+	// Get BT Trackers List
+	lists := getBTTrackersList(config.TrackerURL)
+
+	// Join list to string
+	btTrackers := strings.Join(lists, ",")
+
+	// If aria2.session and aria2.log do not exists, create one
+	sessionFile := filepath.Join(dir, "aria2.session")
+	if _, er := os.Stat(sessionFile); os.IsNotExist(er) {
+		createFile(sessionFile)
+	}
+
+	logFile := filepath.Join(dir, "aria2.log")
+	if _, er := os.Stat(logFile); os.IsNotExist(er) {
+		createFile(logFile)
+	}
+
+	confPath := filepath.Join(dir, "aria2.conf")
+	var firstLoad bool
+	// If aria2.conf does not exist, download it from config repository
+	if _, er := os.Stat(confPath); os.IsNotExist(er) {
+		downloadFile(confPath, config.ConfigURL)
+		firstLoad = true
+	}
+
+	aria2Config := loadAria2Config(confPath)
+
+	if !strings.Contains(aria2Config, btTrackers) {
+
+		p := regexp.MustCompile(`(bt-tracker=.*)`)
+		data := p.ReplaceAllString(aria2Config, "bt-tracker="+btTrackers)
+		// If first time download aria2.conf, setup below dirs
+		if firstLoad {
+			p = regexp.MustCompile(`(dir=.*)`)
+			if isWindows() {
+				data = p.ReplaceAllString(data, "dir=D:\\Downloads")
+			} else {
+				data = p.ReplaceAllString(data, "dir=~/Downloads")
+			}
+			p = regexp.MustCompile(`(log=.*)`)
+			data = p.ReplaceAllString(data, "log="+logFile)
+			p = regexp.MustCompile(`(input-file=.*)`)
+			data = p.ReplaceAllString(data, "input-file="+sessionFile)
+			p = regexp.MustCompile(`(save-session=.*)`)
+			data = p.ReplaceAllString(data, "save-session="+sessionFile)
+		}
+		err := ioutil.WriteFile(confPath, []byte(data), 0644)
+		if err != nil {
+			log.Panic(err)
+		}
+	}
+
+	// Start aria2c.exe
+	var run *exec.Cmd
+	if isWindows() {
+		run = exec.Command("aria2c.exe", "--conf-path=aria2.conf")
+	} else {
+		run = exec.Command("aria2c", "--conf-path=aria2.conf")
+	}
+
+	out, err := run.Output()
+	if err != nil {
+		panic(err)
+	}
+	log.Println(out)
+	log.Println("start success!")
+}
+
+func isWindows() bool {
+	return runtime.GOOS == "windows"
+}
+
+func loadAria2Config(path string) string {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Panic(err)
+	}
+	return string(data)
+}
+
+func createFile(filename string) {
+	f, err := os.Create(filename)
+	if err != nil {
+		log.Panic(err)
+	}
+	f.Close()
+}
+
+func getBTTrackersList(url string) []string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	trackers := make([]string, 0)
+	for _, v := range strings.Split(string(body), "\n") {
+		if v != "" {
+			trackers = append(trackers, v)
+		}
+	}
+	// log.Println(string(body))
+	return trackers
+}
+
+func downloadFile(filepath string, url string) {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer resp.Body.Close()
+
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer out.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
+func getLatestAria2DownloadLink(url string) string {
+
+	c, err := http.Get(url)
+	if err != nil {
+
+		log.Panicln(err)
+	}
+	defer c.Body.Close()
+	body, err := ioutil.ReadAll(c.Body)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	var p *regexp.Regexp
+	if isWindows() {
+		p = regexp.MustCompile(`https:.*\.zip`)
+		for _, v := range strings.Split(string(body), ",") {
+			if strings.Contains(v, "win-64bit-build1.zip") && strings.Contains(v, "browser_download_url") {
+				url := p.FindString(v)
+				return url
+			}
+		}
+	} else {
+		p = regexp.MustCompile(`https:.*\.tar\.gz`)
+		for _, v := range strings.Split(string(body), ",") {
+			if strings.Contains(v, ".tar.gz") && strings.Contains(v, "browser_download_url") {
+				url := p.FindString(v)
+				return url
+			}
+		}
+
+	}
+	return ""
+}
+
+func copyFile(src, dst string) (int64, error) {
+	sourceFileStat, err := os.Stat(src)
+	if err != nil {
+		return 0, err
+	}
+
+	if !sourceFileStat.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", src)
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(filepath.Join(dst, sourceFileStat.Name()))
+	if err != nil {
+		return 0, err
+	}
+	defer destination.Close()
+	nBytes, err := io.Copy(destination, source)
+	return nBytes, err
+}
+
+func copyFiles(files []string, dst string) {
+
+	for _, src := range files {
+		sourceFileStat, err := os.Stat(src)
+		if err != nil {
+			log.Panicln(err)
+		}
+
+		if sourceFileStat.Mode().IsDir() {
+			continue
+		}
+		bytes, err := copyFile(src, dst)
+		if err != nil {
+			log.Panicln(err)
+		}
+		log.Printf("copied: %d bytes.", bytes)
+	}
+}
+
+// Unzip will decompress a zip archive, moving all files and folders
+// within the zip file (parameter 1) to an output directory (parameter 2).
+func unzip(src string, dest string) ([]string, error) {
+
+	var filenames []string
+
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return filenames, err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+
+		// Store filename/path for returning and using later on
+		fpath := filepath.Join(dest, f.Name)
+
+		// Check for ZipSlip. More Info: http://bit.ly/2MsjAWE
+		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return filenames, fmt.Errorf("%s: illegal file path", fpath)
+		}
+
+		filenames = append(filenames, fpath)
+
+		if f.FileInfo().IsDir() {
+			continue
+		}
+
+		// Make File
+		if err = os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return filenames, err
+		}
+
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return filenames, err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return filenames, err
+		}
+
+		_, err = io.Copy(outFile, rc)
+
+		// Close the file without defer to close before next iteration of loop
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return filenames, err
+		}
+	}
+	return filenames, nil
+}

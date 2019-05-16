@@ -1,0 +1,6 @@
+{
+    "trackerUrl": "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+    "confUrl": "https://raw.githubusercontent.com/Art2Cat/Rorscript/master/config/aria2.conf",
+    "aria2Url": "https://api.github.com/repos/aria2/aria2/releases/latest",
+    "version": "1.34.0"
+}
