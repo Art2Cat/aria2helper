@@ -27,6 +27,7 @@ go build .
 ```bash
 # download the code
 go get github.com/Art2Cat/aria2helper
+cd ~/go/src/github/Art2Cat/aria2helper
 go build .
 
 # Move aria2helper and config.json to the directory(e.g ~/aria2) where you installed aria2.
