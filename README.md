@@ -9,7 +9,7 @@ this is an aria2 start helper.
 
 ## Requirements
 
-golang version >= 1.12 [downlad link](https://golang.org/dl/)
+golang version >= 1.13 [download link](https://golang.org/dl/)
 ## Usage
 
 ### Windows

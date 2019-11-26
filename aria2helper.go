@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"regexp"
 )
@@ -29,8 +30,16 @@ func main() {
 
 	dir, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
+
+	f := logToFile(dir)
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			log.Panic(err)
+		}
+	}()
 
 	// load BT trackers list url
 	config := Config{}
@@ -50,7 +59,7 @@ func main() {
 	if url == "" {
 		log.Panicln("can not get latest aria2 release.")
 	}
-
+	var isUpdated = false
 	s := strings.Split(url, "/")
 	fileName := s[len(s)-1]
 	version := strings.Split(fileName, "-")[1]
@@ -62,12 +71,15 @@ func main() {
 			binaryFile := filepath.Join(dir, fileName)
 			if _, err := os.Stat(binaryFile); os.IsNotExist(err) {
 				log.Println(binaryFile)
-				downloadFile(binaryFile, url)
+				err = downloadFile(binaryFile, url)
+				if err != nil {
+					log.Panic(err)
+				}
 			}
 
 			files, err := unzip(binaryFile, dir)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(err)
 			}
 
 			log.Println("Unzipped:\n" + strings.Join(files, "\n"))
@@ -75,24 +87,52 @@ func main() {
 			// Copy files to current dir
 			copyFiles(files, dir)
 
-			// Save latest Aria2 version to config.json
-			config.Version = version
-			data, err := json.MarshalIndent(&config, "", "    ")
-			if err != nil {
-				log.Panicln(err)
-			}
-
-			err = ioutil.WriteFile(filepath.Join(dir, "config.json"), data, 0664)
-			if err != nil {
-				log.Panicln(err)
-			}
+			isUpdated = true
 		}
 	} else {
 		run := exec.Command("which", "aria2c")
 
 		err := run.Run()
 		if err != nil {
-			log.Panicln("please install aria2 before run the helper.")
+			if isDarwin() {
+				log.Panicf("please install aria2 before run the helper.\n download link(%s)\n", url)
+			} else {
+				log.Panicln("please install aria2 via 'apt/yum' before run the helper.")
+			}
+
+			//run = exec.Command("tar", "xvf", binaryFile)
+			//err := run.Start()
+			//bytes, err := run.Output()
+			//if err != nil {
+			//	log.Println(err)
+			//}
+			//log.Println(string(bytes))
+			//
+			//run = exec.Command("mv", "f", strings.Split(binaryFile, ".")[0], "aria2")
+			//err = run.Run()
+			//if err != nil {
+			//	log.Panicln(err)
+			//}
+			//run = exec.Command("rm", "y", binaryFile)
+			//err = run.Run()
+			//if err != nil {
+			//	log.Panicln(err)
+			//}
+			//isUpdated = false
+		}
+	}
+
+	if isUpdated {
+		// Save latest Aria2 version to config.json
+		config.Version = version
+		data, err := json.MarshalIndent(&config, "", "    ")
+		if err != nil {
+			log.Panicln(err)
+		}
+
+		err = ioutil.WriteFile(filepath.Join(dir, "config.json"), data, 0664)
+		if err != nil {
+			log.Panicln(err)
 		}
 	}
 
@@ -115,9 +155,12 @@ func main() {
 
 	confPath := filepath.Join(dir, "aria2.conf")
 	var firstLoad bool
+
 	// If aria2.conf does not exist, download it from config repository
 	if _, er := os.Stat(confPath); os.IsNotExist(er) {
-		downloadFile(confPath, config.ConfigURL)
+		if err := downloadFile(confPath, config.ConfigURL); err != nil {
+			log.Panic(err)
+		}
 		firstLoad = true
 	}
 
@@ -168,6 +211,10 @@ func isWindows() bool {
 	return runtime.GOOS == "windows"
 }
 
+func isDarwin() bool {
+	return runtime.GOOS == "darwin"
+}
+
 func loadAria2Config(path string) string {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -181,7 +228,9 @@ func createFile(filename string) {
 	if err != nil {
 		log.Panic(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		log.Panic(err)
+	}
 }
 
 func getBTTrackersList(url string) []string {
@@ -190,7 +239,12 @@ func getBTTrackersList(url string) []string {
 		log.Fatalln(err)
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		e := resp.Body.Close()
+		if e != nil {
+			log.Fatalln(e)
+		}
+	}()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -203,39 +257,54 @@ func getBTTrackersList(url string) []string {
 			trackers = append(trackers, v)
 		}
 	}
-	// log.Println(string(body))
 	return trackers
 }
 
-func downloadFile(filepath string, url string) {
+func downloadFile(filepath string, url string) (err error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Panic(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		e := resp.Body.Close()
+		if e != nil {
+			err = e
+		}
+	}()
 
 	// Create the file
 	out, err := os.Create(filepath)
 	if err != nil {
 		log.Panic(err)
 	}
-	defer out.Close()
+	defer func() {
+		e := out.Close()
+		if e != nil {
+			err = e
+		}
+	}()
 
 	// Write the body to file
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
 		log.Panic(err)
 	}
+	return
 }
 
 func getLatestAria2DownloadLink(url string) string {
 
 	c, err := http.Get(url)
 	if err != nil {
-
 		log.Panicln(err)
 	}
-	defer c.Body.Close()
+	defer func() {
+		e := c.Body.Close()
+		if e != nil {
+			log.Panicln(e)
+		}
+	}()
+
 	body, err := ioutil.ReadAll(c.Body)
 	if err != nil {
 		log.Fatalln(err)
@@ -251,9 +320,9 @@ func getLatestAria2DownloadLink(url string) string {
 			}
 		}
 	} else {
-		p = regexp.MustCompile(`https:.*\.tar\.gz`)
+		p = regexp.MustCompile(`https:.*\.dmg`)
 		for _, v := range strings.Split(string(body), ",") {
-			if strings.Contains(v, ".tar.gz") && strings.Contains(v, "browser_download_url") {
+			if strings.Contains(v, ".dmg") && strings.Contains(v, "browser_download_url") {
 				url := p.FindString(v)
 				return url
 			}
@@ -263,7 +332,7 @@ func getLatestAria2DownloadLink(url string) string {
 	return ""
 }
 
-func copyFile(src, dst string) (int64, error) {
+func copyFile(src, dst string) (nBytes int64, err error) {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
 		return 0, err
@@ -277,15 +346,24 @@ func copyFile(src, dst string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer source.Close()
+	defer func() {
+		if e := source.Close(); e != nil {
+			nBytes, err = 0, e
+		}
+	}()
 
 	destination, err := os.Create(filepath.Join(dst, sourceFileStat.Name()))
 	if err != nil {
 		return 0, err
 	}
-	defer destination.Close()
-	nBytes, err := io.Copy(destination, source)
-	return nBytes, err
+
+	defer func() {
+		if e := destination.Close(); e != nil {
+			nBytes, err = 0, e
+		}
+	}()
+	nBytes, err = io.Copy(destination, source)
+	return
 }
 
 func copyFiles(files []string, dst string) {
@@ -309,15 +387,17 @@ func copyFiles(files []string, dst string) {
 
 // Unzip will decompress a zip archive, moving all files and folders
 // within the zip file (parameter 1) to an output directory (parameter 2).
-func unzip(src string, dest string) ([]string, error) {
-
-	var filenames []string
+func unzip(src string, dest string) (filenames []string, err error) {
 
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return filenames, err
 	}
-	defer r.Close()
+	defer func() {
+		if e := r.Close(); e != nil {
+			err = e
+		}
+	}()
 
 	for _, f := range r.File {
 
@@ -353,12 +433,33 @@ func unzip(src string, dest string) ([]string, error) {
 		_, err = io.Copy(outFile, rc)
 
 		// Close the file without defer to close before next iteration of loop
-		outFile.Close()
+		if e := outFile.Close(); e != nil {
+			log.Fatalln(e)
+		}
 		rc.Close()
 
 		if err != nil {
 			return filenames, err
 		}
 	}
-	return filenames, nil
+	return
+}
+
+func logToFile(dir string) *os.File {
+
+	//create log file name
+	var filename = "error-%s.log"
+	format := strings.Replace(time.Now().Format(time.RFC3339), ":", "-", -1)
+	filename = fmt.Sprintf(filename, format)
+	file := filepath.Join(dir, filename)
+
+	//create your file with desired read/write permissions
+	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	//set output of logs to f
+	log.SetOutput(f)
+	return f
 }
