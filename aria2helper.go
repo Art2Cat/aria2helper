@@ -88,10 +88,11 @@ func main() {
 			copyFiles(files, dir)
 
 			isUpdated = true
+			os.Remove(binaryFile)
+			os.RemoveAll(strings.Replace(binaryFile, ".zip", "", 1))
 		}
 	} else {
 		run := exec.Command("which", "aria2c")
-
 		err := run.Run()
 		if err != nil {
 			if isDarwin() {
@@ -99,26 +100,6 @@ func main() {
 			} else {
 				log.Panicln("please install aria2 via 'apt/yum' before run the helper.")
 			}
-
-			//run = exec.Command("tar", "xvf", binaryFile)
-			//err := run.Start()
-			//bytes, err := run.Output()
-			//if err != nil {
-			//	log.Println(err)
-			//}
-			//log.Println(string(bytes))
-			//
-			//run = exec.Command("mv", "f", strings.Split(binaryFile, ".")[0], "aria2")
-			//err = run.Run()
-			//if err != nil {
-			//	log.Panicln(err)
-			//}
-			//run = exec.Command("rm", "y", binaryFile)
-			//err = run.Run()
-			//if err != nil {
-			//	log.Panicln(err)
-			//}
-			//isUpdated = false
 		}
 	}
 
@@ -448,7 +429,7 @@ func unzip(src string, dest string) (filenames []string, err error) {
 func logToFile(dir string) *os.File {
 
 	//create log file name
-	var filename = "error-%s.log"
+	var filename = "info-%s.log"
 	format := strings.Replace(time.Now().Format(time.RFC3339), ":", "-", -1)
 	filename = fmt.Sprintf(filename, format)
 	file := filepath.Join(dir, filename)
