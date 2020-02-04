@@ -117,12 +117,6 @@ func main() {
 		}
 	}
 
-	// Get BT Trackers List
-	lists := getBTTrackersList(config.TrackerURL)
-
-	// Join list to string
-	btTrackers := strings.Join(lists, ",")
-
 	// If aria2.session and aria2.log do not exists, create one
 	sessionFile := filepath.Join(dir, "aria2.session")
 	if _, er := os.Stat(sessionFile); os.IsNotExist(er) {
@@ -147,28 +141,33 @@ func main() {
 
 	aria2Config := loadAria2Config(confPath)
 
-	if !strings.Contains(aria2Config, btTrackers) {
-
-		p := regexp.MustCompile(`(bt-tracker=.*)`)
-		data := p.ReplaceAllString(aria2Config, "bt-tracker="+btTrackers)
-		// If first time download aria2.conf, setup below dirs
-		if firstLoad {
-			p = regexp.MustCompile(`(dir=.*)`)
-			if isWindows() {
-				data = p.ReplaceAllString(data, "dir=D:\\Downloads")
-			} else {
-				data = p.ReplaceAllString(data, "dir=~/Downloads")
+	// Get BT Trackers List
+	lists, err := getBTTrackersList(config.TrackerURL)
+	if err == nil {
+		// Join list to string
+		btTrackers := strings.Join(lists, ",")
+		if !strings.Contains(aria2Config, btTrackers) {
+			p := regexp.MustCompile(`(bt-tracker=.*)`)
+			data := p.ReplaceAllString(aria2Config, "bt-tracker="+btTrackers)
+			// If first time download aria2.conf, setup below dirs
+			if firstLoad {
+				p = regexp.MustCompile(`(dir=.*)`)
+				if isWindows() {
+					data = p.ReplaceAllString(data, "dir=D:\\Downloads")
+				} else {
+					data = p.ReplaceAllString(data, "dir=~/Downloads")
+				}
+				p = regexp.MustCompile(`(log=.*)`)
+				data = p.ReplaceAllString(data, "log="+logFile)
+				p = regexp.MustCompile(`(input-file=.*)`)
+				data = p.ReplaceAllString(data, "input-file="+sessionFile)
+				p = regexp.MustCompile(`(save-session=.*)`)
+				data = p.ReplaceAllString(data, "save-session="+sessionFile)
 			}
-			p = regexp.MustCompile(`(log=.*)`)
-			data = p.ReplaceAllString(data, "log="+logFile)
-			p = regexp.MustCompile(`(input-file=.*)`)
-			data = p.ReplaceAllString(data, "input-file="+sessionFile)
-			p = regexp.MustCompile(`(save-session=.*)`)
-			data = p.ReplaceAllString(data, "save-session="+sessionFile)
-		}
-		err := ioutil.WriteFile(confPath, []byte(data), 0644)
-		if err != nil {
-			log.Panic(err)
+			err := ioutil.WriteFile(confPath, []byte(data), 0644)
+			if err != nil {
+				log.Panic(err)
+			}
 		}
 	}
 
@@ -214,10 +213,11 @@ func createFile(filename string) {
 	}
 }
 
-func getBTTrackersList(url string) []string {
+func getBTTrackersList(url string) ([]string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Fatalln(err)
+		return nil, err
 	}
 
 	defer func() {
@@ -230,6 +230,7 @@ func getBTTrackersList(url string) []string {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalln(err)
+		return nil, err
 	}
 
 	trackers := make([]string, 0)
@@ -238,7 +239,7 @@ func getBTTrackersList(url string) []string {
 			trackers = append(trackers, v)
 		}
 	}
-	return trackers
+	return trackers, nil
 }
 
 func downloadFile(filepath string, url string) (err error) {
